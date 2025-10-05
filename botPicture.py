@@ -40,30 +40,40 @@ def run_web_server():
     app.run(host='0.0.0.0', port=RENDER_PORT, debug=False, use_reloader=False)
 
 # *********** ฟังก์ชันสำหรับเรียกใช้ Freepik API (โค้ดเดิม) ***********
+# ในไฟล์ bot.py
 def generate_freepik_image(prompt: str):
-    # ... (โค้ด Freepik API ยังคงเดิม) ...
     url = "https://api.freepik.com/v1/image/generate" 
+    
+    # 🔴 เปลี่ยนมาใช้ Header ตามตัวอย่างในเว็บไซต์ 
+    # (สมมติว่า Key เดียวกันใช้ได้กับทั้งสองรูปแบบ)
     headers = {
         "accept": "image/jpeg",
         "content-type": "application/json",
-        "Authorization": f"Bearer {FREEPIK_API_KEY}"
+        # 🟢 เปลี่ยนจาก "Authorization: Bearer" เป็น "x-freepik-api-key"
+        "x-freepik-api-key": FREEPIK_API_KEY 
     }
+
     payload = {
         "prompt": prompt,
         "aspect_ratio": "1:1", 
         "style": "photorealistic", 
     }
+    
     try:
+        # ... (ส่วน requests.post(url, headers=headers, json=payload) ยังคงเดิม) ...
         response = requests.post(url, headers=headers, json=payload)
+        
+        # ... (ส่วนตรวจสอบสถานะยังคงเดิม) ...
         if response.status_code == 200 and response.content:
             return response.content
         else:
             print(f"Freepik API Error: Status {response.status_code}, Response: {response.text}")
+            # 💡 สำคัญ: ข้อความตอบกลับจาก API มักจะบอกเหตุผลชัดเจน
+            print("Freepik Response Content:", response.text) 
             return None
     except Exception as e:
         print(f"An error occurred during API call: {e}")
         return None
-
 # *********** Event & Slash Command (โค้ดเดิม) ***********
 @bot.event
 async def on_ready():
