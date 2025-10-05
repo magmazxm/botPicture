@@ -1,8 +1,9 @@
 import os
 import requests
-from io import BytesIO
-from discord import File, Intents
+import io
+import discord
 from discord.ext import commands
+from discord import app_commands # Import ส่วนที่จำเป็นสำหรับ Slash Commands
 from dotenv import load_dotenv
 
 # โหลดตัวแปรสภาพแวดล้อม
@@ -17,14 +18,18 @@ FREEPIK_API_KEY = os.getenv("FREEPIK_API_KEY")
 ALLOWED_CHANNEL_ID = 1424193369646825482 
 
 # *********** ตั้งค่า Discord Bot ***********
-intents = Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+intents = discord.Intents.default()
+# MESSAGE CONTENT INTENT ยังจำเป็นสำหรับบอทที่อ่านข้อความ (ถึงแม้จะเปลี่ยนเป็น Slash Command แล้ว) 
+# แต่ในอนาคต หากคุณใช้แต่ Slash Command อย่างเดียว อาจไม่จำเป็นต้องเปิดถ้าไม่ใช้ข้อมูลในข้อความ
+# อย่างไรก็ตาม เพื่อความชัวร์ ให้เปิดไว้ตามที่แก้ไขปัญหา Privileged Intents ไปแล้ว
+intents.message_content = True 
+# ในการใช้ Slash Command ให้สร้าง Bot โดยไม่ต้องมี command_prefix
+bot = commands.Bot(command_prefix=commands.when_mentioned_or(""), intents=intents) 
+
 
 # *********** ฟังก์ชันสำหรับเรียกใช้ Freepik API ***********
 def generate_freepik_image(prompt: str):
     """เรียก Freepik API เพื่อเจนรูปภาพ"""
-    # ... (โค้ดส่วนนี้ยังคงเดิม) ...
     url = "https://api.freepik.com/v1/image/generate" 
     headers = {
         "accept": "image/jpeg",
@@ -34,7 +39,7 @@ def generate_freepik_image(prompt: str):
 
     payload = {
         "prompt": prompt,
-        "aspect_ratio": "1:1",
+        "aspect_ratio": "1:1", 
         "style": "photorealistic", 
     }
     
@@ -50,43 +55,60 @@ def generate_freepik_image(prompt: str):
         print(f"An error occurred during API call: {e}")
         return None
 
-
 # *********** Event เมื่อ Bot พร้อมใช้งาน ***********
 @bot.event
 async def on_ready():
-    """แสดงข้อความเมื่อบอทเชื่อมต่อสำเร็จ"""
+    """แสดงข้อความเมื่อบอทเชื่อมต่อสำเร็จ และทำการ Sync Slash Commands"""
     print(f'🤖 บอทเชื่อมต่อแล้ว: {bot.user}')
     print(f'🔒 บอทถูกจำกัดการใช้งานใน Channel ID: {ALLOWED_CHANNEL_ID}')
-
-
-# *********** คำสั่งสำหรับเจนรูปภาพ พร้อมการตรวจสอบ Channel ID ***********
-@bot.command(name='generate', help='เจนรูปภาพจากข้อความ. ใช้: !generate [prompt]')
-async def generate(ctx, *, prompt: str):
-    """จัดการคำสั่ง !generate [prompt] และตรวจสอบ Channel ID"""
-
-    # ตรวจสอบ Channel ID ก่อนดำเนินการ
-    if ctx.channel.id != ALLOWED_CHANNEL_ID:
-        # บอทจะไม่ตอบสนองในช่องทางอื่น หรือคุณจะส่งข้อความแจ้งเตือนก็ได้
-        # await ctx.send(f"❌ คำสั่งนี้ใช้ได้เฉพาะในช่องทางที่มี ID {ALLOWED_CHANNEL_ID} เท่านั้น!", delete_after=5) 
-        return # ออกจากฟังก์ชันทันที
     
-    # 1. แจ้งผู้ใช้ว่ากำลังดำเนินการ
-    await ctx.send(f"⏳ กำลังเจนรูปภาพจาก prompt: **{prompt}**...")
+    # 🌟 ทำการ Sync Slash Commands
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} slash commands.")
+    except Exception as e:
+        print(f"❌ Failed to sync slash commands: {e}")
 
-    # 2. เรียกใช้ Freepik API
+# *********** Slash Command สำหรับเจนรูปภาพ ***********
+@bot.tree.command(name="generate", description="สร้างรูปภาพจากข้อความ Prompt โดยใช้ Freepik API")
+@app_commands.describe(
+    prompt="คำอธิบายของรูปภาพที่คุณต้องการสร้าง (ภาษาอังกฤษ)"
+)
+async def generate_slash(interaction: discord.Interaction, prompt: str):
+    """จัดการคำสั่ง /generate [prompt] และตรวจสอบ Channel ID"""
+    
+    # 1. ตรวจสอบ Channel ID 
+    if interaction.channel_id != ALLOWED_CHANNEL_ID:
+        # ใช้ interaction.response.send_message สำหรับ Slash Commands
+        await interaction.response.send_message(
+            f"❌ คำสั่ง **/generate** ใช้ได้เฉพาะในช่องทางที่มี ID **{ALLOWED_CHANNEL_ID}** เท่านั้น!",
+            ephemeral=True # ตั้งค่าให้ข้อความนี้มีแค่ผู้ใช้ที่เห็นเท่านั้น
+        )
+        return
+    
+    # 2. แจ้งผู้ใช้ว่ากำลังดำเนินการ
+    # ใช้ interaction.response.defer() เพื่อบอก Discord ว่ากำลังประมวลผลอยู่
+    await interaction.response.defer() 
+
+    # 3. เรียกใช้ Freepik API
     image_bytes = await bot.loop.run_in_executor(
         None, generate_freepik_image, prompt
     )
     
-    # 3. ตรวจสอบและส่งรูปภาพกลับไปที่ Discord
+    # 4. ตรวจสอบและส่งรูปภาพกลับไปที่ Discord
     if image_bytes:
-        image_file = File(BytesIO(image_bytes), filename="freepik_image.jpg")
-        await ctx.send(
+        image_file = discord.File(io.BytesIO(image_bytes), filename="freepik_image.jpg")
+        
+        # ใช้ interaction.followup.send เพื่อส่งผลลัพธ์หลังจาก defer
+        await interaction.followup.send(
             f"✅ รูปภาพที่สร้างโดย Freepik จาก prompt: **{prompt}**",
             file=image_file
         )
     else:
-        await ctx.send(f"❌ ไม่สามารถเจนรูปภาพได้ โปรดตรวจสอบ prompt หรือ Freepik API Key.")
+        await interaction.followup.send(
+            f"❌ ไม่สามารถเจนรูปภาพได้ โปรดตรวจสอบ Prompt หรือ Freepik API Key.",
+            ephemeral=True # ตั้งค่าให้ข้อความข้อผิดพลาดมีแค่ผู้ใช้ที่เห็นเท่านั้น
+        )
 
 # *********** รันบอท ***********
 if __name__ == "__main__":
