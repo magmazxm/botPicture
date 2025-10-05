@@ -19,7 +19,7 @@ FREEPIK_API_KEY = os.getenv("FREEPIK_API_KEY")
 # 🌟 PORT สำหรับ Render Web Service
 RENDER_PORT = int(os.getenv("PORT", 8080)) 
 
-# 🔒 Channel ID ที่บอทจะตอบสนองเท่านั้น (เปลี่ยน ID นี้ตามต้องการ)
+# 🔒 Channel ID ที่บอทจะตอบสนองเท่านั้น 
 ALLOWED_CHANNEL_ID = 1424193369646825482 
 
 # *********** 2. ตั้งค่า Discord Bot & Intents ***********
@@ -62,11 +62,11 @@ def check_mystic_status(job_id: str):
             data = response.json()
 
             if response.status_code == 200:
-                status = data.get("status")
+                status = data.get("data", {}).get("status") # ดึง status จาก Object "data"
                 
                 if status == "completed":
                     # 🟢 ถ้าเสร็จแล้ว ให้คืนค่า URL ของรูปภาพ
-                    return data.get("result", {}).get("image_url")
+                    return data.get("data", {}).get("result", {}).get("image_url")
                 elif status == "failed" or status == "cancelled":
                     return None 
             else:
@@ -89,7 +89,7 @@ def generate_mystic_image(prompt: str):
 
     payload = {
         "prompt": prompt,
-        "resolution": "1k", 
+        "resolution": "1k", # เลือก 1k เพื่อความเร็วในการทดสอบ
         "aspect_ratio": "square_1_1", 
         "model": "realism" 
     }
@@ -98,10 +98,14 @@ def generate_mystic_image(prompt: str):
         # 1. ส่งคำสั่งสร้าง
         response = requests.post(url, headers=headers, json=payload)
         
-        if response.status_code == 202: # 🟢 202 Accepted คือสำเร็จ
-            job_id = response.json().get("job_id")
+        # 🟢 ยอมรับทั้ง 200 OK และ 202 Accepted
+        if response.status_code in [200, 202]: 
+            # 🟢 ดึง task_id จาก Object "data" (ตามผลการทดสอบของคุณ)
+            job_id = response.json().get("data", {}).get("task_id")
+            
             if not job_id:
-                print("Mystic failed to return a job_id.")
+                print("Mystic failed to return a task_id/job_id.")
+                print("Mystic Response Content:", response.text) 
                 return None
             
             # 2. ตรวจสอบสถานะงาน
@@ -155,7 +159,7 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
     # 🌟 แจ้ง Discord ว่ากำลังประมวลผล (สำคัญมาก ป้องกัน Time-out)
     await interaction.response.defer() 
 
-    # 🟢 บรรทัด Debug ที่เพิ่มเข้ามาเพื่อยืนยันว่าโค้ดมาถึงตรงนี้
+    # 🟢 บรรทัด Debug เพื่อยืนยันว่าโค้ดมาถึง API call
     print(f"DEBUG: Starting Mystic API call with prompt: {prompt}")
 
     # เรียกใช้ฟังก์ชัน Mystic ใน Thread แยก
@@ -171,8 +175,9 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
             file=image_file
         )
     else:
+        # 🚨 แก้ไขข้อความ Error เพื่อให้ผู้ใช้ทราบว่าต้องตรวจสอบ Log 
         await interaction.followup.send(
-            f"❌ ไม่สามารถเจนรูปภาพได้ โปรดตรวจสอบ **Prompt, Freepik API Key** หรือ **Log ใน Render**",
+            f"❌ ไม่สามารถเจนรูปภาพได้ โปรดตรวจสอบ **Log ใน Render** เพื่อดูสาเหตุจาก Freepik.",
             ephemeral=True
         )
 
