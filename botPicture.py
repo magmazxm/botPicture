@@ -42,33 +42,31 @@ def run_web_server():
 # *********** ฟังก์ชันสำหรับเรียกใช้ Freepik API (โค้ดเดิม) ***********
 # ในไฟล์ bot.py
 def generate_freepik_image(prompt: str):
+    # 🟢 กลับไปใช้ Endpoint สำหรับการสร้างแบบ Sync
     url = "https://api.freepik.com/v1/image/generate" 
     
-    # 🔴 เปลี่ยนมาใช้ Header ตามตัวอย่างในเว็บไซต์ 
-    # (สมมติว่า Key เดียวกันใช้ได้กับทั้งสองรูปแบบ)
+    # 🟢 ใช้ Header ที่ยืนยันแล้วว่าถูกต้องสำหรับ Key ของคุณ
     headers = {
         "accept": "image/jpeg",
         "content-type": "application/json",
-        # 🟢 เปลี่ยนจาก "Authorization: Bearer" เป็น "x-freepik-api-key"
         "x-freepik-api-key": FREEPIK_API_KEY 
     }
 
+    # Payload ที่จำเป็นสำหรับการสร้างรูป
     payload = {
         "prompt": prompt,
         "aspect_ratio": "1:1", 
-        "style": "photorealistic", 
+        "style": "photorealistic", # หรือ style อื่นๆ ที่ Freepik รองรับ
     }
     
     try:
-        # ... (ส่วน requests.post(url, headers=headers, json=payload) ยังคงเดิม) ...
         response = requests.post(url, headers=headers, json=payload)
         
-        # ... (ส่วนตรวจสอบสถานะยังคงเดิม) ...
         if response.status_code == 200 and response.content:
             return response.content
         else:
-            print(f"Freepik API Error: Status {response.status_code}, Response: {response.text}")
-            # 💡 สำคัญ: ข้อความตอบกลับจาก API มักจะบอกเหตุผลชัดเจน
+            # 💡 สำคัญ: บรรทัดนี้จะแสดงข้อผิดพลาดที่แท้จริงใน Log
+            print(f"Freepik API Error: Status {response.status_code}")
             print("Freepik Response Content:", response.text) 
             return None
     except Exception as e:
