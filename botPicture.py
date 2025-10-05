@@ -7,7 +7,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 import threading
 from flask import Flask
-import time # 👈 เพิ่มการใช้ time สำหรับการรอระหว่าง Polling
+import time 
 
 # โหลดตัวแปรสภาพแวดล้อม
 load_dotenv()
@@ -15,7 +15,11 @@ load_dotenv()
 # *********** 1. ตั้งค่า Environment Variables & Constants ***********
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 FREEPIK_API_KEY = os.getenv("FREEPIK_API_KEY")
+
+# 🌟 PORT สำหรับ Render Web Service
 RENDER_PORT = int(os.getenv("PORT", 8080)) 
+
+# 🔒 Channel ID ที่บอทจะตอบสนองเท่านั้น (เปลี่ยน ID นี้ตามต้องการ)
 ALLOWED_CHANNEL_ID = 1424193369646825482 
 
 # *********** 2. ตั้งค่า Discord Bot & Intents ***********
@@ -23,23 +27,25 @@ intents = discord.Intents.default()
 intents.message_content = True 
 bot = commands.Bot(command_prefix=commands.when_mentioned_or(""), intents=intents) 
 
-# *********** 3. Web Server Function (โค้ดเดิม) ***********
+
+# *********** 3. Web Server Function (สำหรับ Render Health Check) ***********
 app = Flask(__name__)
 
 @app.route('/')
 def home():
+    """Endpoint สำหรับให้ Render ตรวจสอบสถานะ (Health Check)"""
     return "Discord Bot is running!", 200
 
 def run_web_server():
+    """ฟังก์ชันที่รัน Flask Web Server ใน Thread แยกเพื่อเปิด Port"""
     print(f"🌐 Starting Web Server on port {RENDER_PORT} for Render Health Check...")
     app.run(host='0.0.0.0', port=RENDER_PORT, debug=False, use_reloader=False)
 
 
-# *********** 4. ฟังก์ชันสำหรับเรียกใช้ Freepik Mystic API (Mystic Polling) ***********
+# *********** 4. ฟังก์ชันสำหรับเรียกใช้ Freepik Mystic API (Asynchronous Polling) ***********
 
 def check_mystic_status(job_id: str):
     """ฟังก์ชัน Polling เพื่อตรวจสอบสถานะงานสร้างภาพ"""
-    # 🟢 Endpoint สำหรับตรวจสอบสถานะ
     url = f"https://api.freepik.com/v1/ai/mystic/{job_id}"
     headers = {
         "x-freepik-api-key": FREEPIK_API_KEY 
@@ -62,23 +68,19 @@ def check_mystic_status(job_id: str):
                     # 🟢 ถ้าเสร็จแล้ว ให้คืนค่า URL ของรูปภาพ
                     return data.get("result", {}).get("image_url")
                 elif status == "failed" or status == "cancelled":
-                    return None # เกิดข้อผิดพลาด
-                # ถ้า status เป็น "pending" หรือ "running" ให้วนลูปต่อไป
-
+                    return None 
             else:
                 print(f"Mystic Status Check Error: Status {response.status_code}, Response: {response.text}")
                 return None
-
         except Exception as e:
             print(f"An error occurred during Mystic Status Check: {e}")
             return None
             
     print("Mystic generation timed out after 60 seconds.")
-    return None # Time out
+    return None
 
 def generate_mystic_image(prompt: str):
     """ส่งคำสั่งสร้างภาพ Mystic และทำการ Polling จนกว่าจะเสร็จ"""
-    # 🟢 Endpoint สำหรับส่งคำสั่งสร้าง
     url = "https://api.freepik.com/v1/ai/mystic"
     headers = {
         "content-type": "application/json",
@@ -87,7 +89,7 @@ def generate_mystic_image(prompt: str):
 
     payload = {
         "prompt": prompt,
-        "resolution": "1k", # เลือก resolution ที่เล็กที่สุดเพื่อความเร็ว
+        "resolution": "1k", 
         "aspect_ratio": "square_1_1", 
         "model": "realism" 
     }
@@ -106,15 +108,15 @@ def generate_mystic_image(prompt: str):
             image_url = check_mystic_status(job_id)
             
             if image_url:
-                # 3. ดาวน์โหลดรูปภาพจาก URL ที่ได้
+                # 3. ดาวน์โหลดรูปภาพ
                 image_response = requests.get(image_url)
                 if image_response.status_code == 200:
                     return image_response.content
                 
-            return None # ไม่สามารถดึงรูปภาพได้
+            return None
             
         else:
-            # 🚨 บรรทัด Debug ที่สำคัญที่สุด
+            # 🚨 บรรทัด Debug ที่สำคัญที่สุดในการหาปัญหา API Key
             print(f"Mystic Submit Error: Status {response.status_code}")
             print("Mystic Response Content:", response.text) 
             return None
@@ -124,7 +126,7 @@ def generate_mystic_image(prompt: str):
         return None
 
 
-# *********** 5. Discord Events (โค้ดเดิม) ***********
+# *********** 5. Discord Events ***********
 @bot.event
 async def on_ready():
     print(f'🤖 บอทเชื่อมต่อแล้ว: {bot.user}')
@@ -150,11 +152,15 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
         )
         return
     
+    # 🌟 แจ้ง Discord ว่ากำลังประมวลผล (สำคัญมาก ป้องกัน Time-out)
     await interaction.response.defer() 
 
-    # 🟢 เรียกใช้ฟังก์ชัน Mystic ใหม่
+    # 🟢 บรรทัด Debug ที่เพิ่มเข้ามาเพื่อยืนยันว่าโค้ดมาถึงตรงนี้
+    print(f"DEBUG: Starting Mystic API call with prompt: {prompt}")
+
+    # เรียกใช้ฟังก์ชัน Mystic ใน Thread แยก
     image_bytes = await bot.loop.run_in_executor(
-        None, generate_mystic_image, prompt # 👈 เปลี่ยนชื่อฟังก์ชันเป็น generate_mystic_image
+        None, generate_mystic_image, prompt
     )
     
     if image_bytes:
@@ -170,7 +176,7 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
             ephemeral=True
         )
 
-# *********** 7. รันบอท (โค้ดเดิม) ***********
+# *********** 7. รันบอท ***********
 if __name__ == "__main__":
     if not DISCORD_TOKEN or not FREEPIK_API_KEY:
         print("🚨 ERROR: กรุณาตั้งค่า DISCORD_TOKEN และ FREEPIK_API_KEY ใน Environment Variables")
