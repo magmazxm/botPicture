@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import threading
 from flask import Flask 
 import time 
+import asyncio # 💥 ต้อง Import asyncio สำหรับฟังก์ชัน on_ready ที่มีการหน่วงเวลา
 
 # โหลดตัวแปรสภาพแวดล้อม
 load_dotenv()
@@ -16,7 +17,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 FREEPIK_API_KEY = os.getenv("FREEPIK_API_KEY")
 
-# 🌟 PORT สำหรับ Render Web Service
+# 🌟 PORT สำหรับ Render Web Service (Render มักจะใช้ PORT 10000)
 RENDER_PORT = int(os.getenv("PORT", 8080)) 
 
 # 🔒 Channel ID ที่บอทจะตอบสนองเท่านั้น 
@@ -31,6 +32,9 @@ bot = commands.Bot(command_prefix=commands.when_mentioned_or(""), intents=intent
 
 # *********** 3. Web Server Function (สำหรับ Render Health Check) ***********
 app = Flask(__name__)
+
+# ตั้งชื่อ Flask App ให้ตรงกับชื่อไฟล์
+app.name = os.path.basename(__file__).replace(".py", "")
 
 @app.route('/')
 def home():
@@ -62,9 +66,8 @@ def check_mystic_status(job_id: str):
             response = requests.get(url, headers=headers)
             data = response.json()
             
-            # 🟢 บรรทัด Debug ที่สำคัญที่สุดในการหาปัญหา
+            # 🟢 บรรทัด Debug
             print(f"DEBUG: Polling Status Check - HTTP {response.status_code}")
-            print(f"DEBUG: Polling Response: {data}")
 
             if response.status_code == 200:
                 status = data.get("data", {}).get("status")
@@ -72,12 +75,12 @@ def check_mystic_status(job_id: str):
                 if status == "completed":
                     print("DEBUG: Image completed successfully!")
                     
-                    # 💥 การแก้ไขสำคัญ: ดึง URL จาก 'generated' array (ตาม Log ที่สำเร็จ)
+                    # 💥 การแก้ไขสำคัญ: ดึง URL จาก 'generated' array 
                     image_url = None
                     generated_images = data.get("data", {}).get("generated")
                     if isinstance(generated_images, list) and len(generated_images) > 0:
                         image_url = generated_images[0]
-                    # สำรอง: ดึงจาก result.image_url (กรณี Freepik เปลี่ยนโครงสร้าง)
+                    # สำรอง
                     elif data.get("data", {}).get("result", {}).get("image_url"):
                          image_url = data.get("data", {}).get("result", {}).get("image_url")
 
@@ -89,7 +92,6 @@ def check_mystic_status(job_id: str):
                     print(f"DEBUG: Mystic job failed or cancelled. Final Status: {status}")
                     return None 
             else:
-                # Log ข้อผิดพลาดของ Polling
                 print(f"Mystic Status Check Error: Status {response.status_code}, Response: {response.text}")
                 return None
         except Exception as e:
@@ -109,7 +111,7 @@ def generate_mystic_image(prompt: str):
 
     payload = {
         "prompt": prompt,
-        "resolution": "1k", # เลือก 1k เพื่อความเร็วในการทดสอบ
+        "resolution": "1k", 
         "aspect_ratio": "square_1_1", 
         "model": "realism" 
     }
@@ -155,13 +157,23 @@ def generate_mystic_image(prompt: str):
 async def on_ready():
     print(f'🤖 บอทเชื่อมต่อแล้ว: {bot.user}')
     print(f'🔒 บอทถูกจำกัดการใช้งานใน Channel ID: {ALLOWED_CHANNEL_ID}')
-    try:
-        # 💥 บังคับล้างและลงทะเบียนคำสั่งใหม่ทั้งหมด
-        bot.tree.clear_commands(guild=None)
-        synced = await bot.tree.sync() 
-        print(f"✅ FINAL SYNC: Synced {len(synced)} slash commands. การ Sync เสร็จสมบูรณ์.")
-    except Exception as e:
-        print(f"❌ Failed to perform final slash command sync: {e}")
+    
+    # 💥 (FINAL FIX) พยายาม Sync หลายครั้งเพื่อรับมือกับ Latency ของ Render
+    for attempt in range(3):
+        try:
+            # 💥 บังคับล้างและลงทะเบียนคำสั่งใหม่ทั้งหมด
+            bot.tree.clear_commands(guild=None)
+            synced = await bot.tree.sync()
+            
+            # หาก Sync สำเร็จ 
+            print(f"✅ FINAL SYNC (Attempt {attempt+1}): Synced {len(synced)} slash commands. การ Sync สำเร็จ.")
+            return # ออกจาก Loop เมื่อสำเร็จ
+            
+        except Exception as e:
+            print(f"❌ Failed to perform final slash command sync (Attempt {attempt+1}): {e}")
+            await asyncio.sleep(5) # รอ 5 วินาที ก่อนลองใหม่
+
+    print("🚨 WARNING: Command Sync failed after 3 attempts. Please check Discord Developer Portal settings.")
 
 
 # *********** 6. Slash Command ***********
@@ -171,6 +183,7 @@ async def on_ready():
 )
 async def generate_slash(interaction: discord.Interaction, prompt: str):
     
+    # 🚫 ตรวจสอบ Channel ID
     if interaction.channel_id != ALLOWED_CHANNEL_ID:
         await interaction.response.send_message(
             f"❌ คำสั่ง **/generate** ใช้ได้เฉพาะในช่องทางที่อนุญาตเท่านั้น!",
@@ -178,7 +191,7 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
         )
         return
     
-    # 🌟 ต้อง Defer ทันทีเพื่อหลีกเลี่ยง 404 Unknown Interaction
+    # 🌟 ต้อง Defer ทันทีเพื่อหลีกเลี่ยง 404 Unknown Interaction (ซื้อเวลา 15 นาที)
     await interaction.response.defer() 
 
     print(f"DEBUG: Starting Mystic API call with prompt: {prompt}")
@@ -197,9 +210,9 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
             file=image_file
         )
     else:
-        # 🚨 แจ้งผู้ใช้ว่าล้มเหลวและให้ตรวจสอบ Log
+        # 🚨 แจ้งผู้ใช้ว่าล้มเหลว
         await interaction.followup.send(
-            f"❌ ไม่สามารถเจนรูปภาพได้ (อาจจะ Timeout หรือ Freepik ไม่สามารถสร้างได้) โปรดตรวจสอบ **Log ใน Render Worker** เพื่อดูสาเหตุ.",
+            f"❌ ไม่สามารถเจนรูปภาพได้ (อาจจะ Timeout หรือ Freepik ไม่สามารถสร้างได้) โปรดตรวจสอบ **Log ใน Render Web Service** เพื่อดูสาเหตุ.",
             ephemeral=True
         )
 
@@ -208,6 +221,14 @@ if __name__ == "__main__":
     if not DISCORD_TOKEN or not FREEPIK_API_KEY:
         print("🚨 ERROR: กรุณาตั้งค่า DISCORD_TOKEN และ FREEPIK_API_KEY ใน Environment Variables")
     else:
+        # รัน Web Server ใน Thread แยกเพื่อจัดการ Health Check ของ Render
         server_thread = threading.Thread(target=run_web_server)
         server_thread.start()
-        bot.run(DISCORD_TOKEN)
+        
+        # รัน Discord Bot (Main Thread)
+        try:
+            bot.run(DISCORD_TOKEN)
+        except discord.errors.LoginFailure:
+            print("🚨 CRITICAL ERROR: การล็อกอินล้มเหลว! ตรวจสอบ DISCORD_TOKEN ของคุณ.")
+        except Exception as e:
+            print(f"🚨 CRITICAL ERROR: บอทล้มเหลวในการเริ่มต้น: {e}")
