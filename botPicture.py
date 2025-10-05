@@ -6,7 +6,7 @@ from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
 import threading
-from flask import Flask
+from flask import Flask # ยังคงเหลือไว้ แต่จะไม่ถูกใช้ใน Worker
 import time 
 
 # โหลดตัวแปรสภาพแวดล้อม
@@ -16,7 +16,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 FREEPIK_API_KEY = os.getenv("FREEPIK_API_KEY")
 
-# 🌟 PORT สำหรับ Render Web Service
+# 🌟 PORT สำหรับ Render Web Service (จะไม่ถูกใช้ใน Worker แต่คงไว้)
 RENDER_PORT = int(os.getenv("PORT", 8080)) 
 
 # 🔒 Channel ID ที่บอทจะตอบสนองเท่านั้น 
@@ -28,7 +28,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix=commands.when_mentioned_or(""), intents=intents) 
 
 
-# *********** 3. Web Server Function (สำหรับ Render Health Check) ***********
+# *********** 3. Web Server Function (สำหรับ Render Health Check - Worker จะไม่ใช้) ***********
 app = Flask(__name__)
 
 @app.route('/')
@@ -60,6 +60,11 @@ def check_mystic_status(job_id: str):
         try:
             response = requests.get(url, headers=headers)
             data = response.json()
+            
+            # 🟢 บรรทัด Debug ใหม่ที่สำคัญที่สุด
+            print(f"DEBUG: Polling Status Check - HTTP {response.status_code}")
+            print(f"DEBUG: Polling Response: {data}")
+            # 🟢 สิ้นสุดบรรทัด Debug ใหม่
 
             if response.status_code == 200:
                 status = data.get("data", {}).get("status") # ดึง status จาก Object "data"
@@ -70,6 +75,7 @@ def check_mystic_status(job_id: str):
                 elif status == "failed" or status == "cancelled":
                     return None 
             else:
+                # Log ข้อผิดพลาดของ Polling
                 print(f"Mystic Status Check Error: Status {response.status_code}, Response: {response.text}")
                 return None
         except Exception as e:
@@ -100,7 +106,7 @@ def generate_mystic_image(prompt: str):
         
         # 🟢 ยอมรับทั้ง 200 OK และ 202 Accepted
         if response.status_code in [200, 202]: 
-            # 🟢 ดึง task_id จาก Object "data" (ตามผลการทดสอบของคุณ)
+            # 🟢 ดึง task_id จาก Object "data" 
             job_id = response.json().get("data", {}).get("task_id")
             
             if not job_id:
@@ -156,7 +162,7 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
         )
         return
     
-    # 🌟 แจ้ง Discord ว่ากำลังประมวลผล (สำคัญมาก ป้องกัน Time-out)
+    # 🌟 แจ้ง Discord ว่ากำลังประมวลผล 
     await interaction.response.defer() 
 
     # 🟢 บรรทัด Debug เพื่อยืนยันว่าโค้ดมาถึง API call
@@ -177,7 +183,7 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
     else:
         # 🚨 แก้ไขข้อความ Error เพื่อให้ผู้ใช้ทราบว่าต้องตรวจสอบ Log 
         await interaction.followup.send(
-            f"❌ ไม่สามารถเจนรูปภาพได้ โปรดตรวจสอบ **Log ใน Render** เพื่อดูสาเหตุจาก Freepik.",
+            f"❌ ไม่สามารถเจนรูปภาพได้ โปรดตรวจสอบ **Log ใน Render Worker** เพื่อดูสาเหตุจาก Freepik.",
             ephemeral=True
         )
 
@@ -186,6 +192,8 @@ if __name__ == "__main__":
     if not DISCORD_TOKEN or not FREEPIK_API_KEY:
         print("🚨 ERROR: กรุณาตั้งค่า DISCORD_TOKEN และ FREEPIK_API_KEY ใน Environment Variables")
     else:
+        # 📌 เนื่องจากใช้ Worker Service เราจึงสามารถ Comment/ลบ โค้ด Flask ออกได้
+        # แต่เราคงไว้ เพื่อให้โค้ดสามารถใช้ได้ทั้ง Web/Worker
         server_thread = threading.Thread(target=run_web_server)
         server_thread.start()
         bot.run(DISCORD_TOKEN)
