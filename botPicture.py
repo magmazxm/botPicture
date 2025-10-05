@@ -9,13 +9,11 @@ import threading
 from flask import Flask 
 import time 
 
-# โหลดตัวแปรสภาพแวดล้อม
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 FREEPIK_API_KEY = os.getenv("FREEPIK_API_KEY")
 RENDER_PORT = int(os.getenv("PORT", 8080)) 
-
 ALLOWED_CHANNEL_ID = 1424193369646825482 
 
 intents = discord.Intents.default()
@@ -31,7 +29,6 @@ def home():
 def run_web_server():
     print(f"🌐 Starting Web Server on port {RENDER_PORT} for Render Health Check...")
     app.run(host='0.0.0.0', port=RENDER_PORT, debug=False, use_reloader=False)
-
 
 # *********** Freepik Mystic API ***********
 def check_mystic_status(job_id: str):
@@ -58,14 +55,17 @@ def check_mystic_status(job_id: str):
                 if status == "completed":
                     print("DEBUG: Image completed successfully!")
                     result = data.get("data", {}).get("result", {})
-
-                    # ✅ ดักหลายกรณี
-                    image_url = result.get("image_url")
-                    if not image_url:
-                        images = result.get("images")
-                        if isinstance(images, list) and len(images) > 0:
-                            image_url = images[0].get("url")
-
+                    
+                    # 💥 การแก้ไขสำคัญ: ดึง URL จาก 'generated' array 
+                    image_url = None
+                    # Freepik's 'generated' field contains the URL in your log
+                    generated_images = data.get("data", {}).get("generated")
+                    if isinstance(generated_images, list) and len(generated_images) > 0:
+                        image_url = generated_images[0]
+                    # หรือลองดึงจาก result.image_url หาก Freepik เปลี่ยนโครงสร้าง
+                    elif result.get("image_url"):
+                         image_url = result.get("image_url")
+                    
                     print("DEBUG: Final Image URL:", image_url)
                     return image_url
 
@@ -106,6 +106,7 @@ def generate_mystic_image(prompt: str):
 
             if not job_id:
                 print("Mystic failed to return a task_id/job_id.")
+                print("Mystic Response Content:", response.text) 
                 return None
             
             image_url = check_mystic_status(job_id)
@@ -126,7 +127,6 @@ def generate_mystic_image(prompt: str):
         print(f"An error occurred during Mystic API call: {e}")
         return None
 
-
 # *********** Discord Events ***********
 @bot.event
 async def on_ready():
@@ -137,7 +137,6 @@ async def on_ready():
         print(f"✅ Synced {len(synced)} slash commands.")
     except Exception as e:
         print(f"❌ Failed to sync slash commands: {e}")
-
 
 # *********** Slash Command ***********
 @bot.tree.command(name="generate", description="สร้างรูปภาพจากข้อความ Prompt โดยใช้ Freepik Mystic AI")
@@ -153,14 +152,17 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
         )
         return
     
+    # ต้อง Defer ทันทีเพื่อบอก Discord ว่าบอทกำลังทำงาน
     await interaction.response.defer() 
 
     print(f"DEBUG: Starting Mystic API call with prompt: {prompt}")
 
+    # รัน Freepik ใน Thread แยก
     image_bytes = await bot.loop.run_in_executor(
         None, generate_mystic_image, prompt
     )
     
+    # ตอบกลับไปยัง Discord ภายใน 15 นาที
     if image_bytes:
         image_file = discord.File(io.BytesIO(image_bytes), filename="freepik_mystic_image.jpg")
         await interaction.followup.send(
@@ -168,11 +170,11 @@ async def generate_slash(interaction: discord.Interaction, prompt: str):
             file=image_file
         )
     else:
+        # 🚨 เนื่องจาก Freepik API Success แต่ Timeout/Fail เราควรแจ้งผู้ใช้
         await interaction.followup.send(
-            f"❌ ไม่สามารถเจนรูปภาพได้ โปรดตรวจสอบ **Log ใน Render Worker** เพื่อดูสาเหตุจาก Freepik.",
+            f"❌ ไม่สามารถเจนรูปภาพได้ (อาจจะ Timeout หรือ Freepik ไม่สามารถสร้างได้) โปรดตรวจสอบ **Log ใน Render Worker** เพื่อดูสาเหตุ.",
             ephemeral=True
         )
-
 
 # *********** Run Bot ***********
 if __name__ == "__main__":
