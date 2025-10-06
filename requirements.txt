@@ -1,5 +1,3 @@
-# requirements.txt
-discord-py
-requests
+discord.py
 python-dotenv
-flask  # เพิ่ม Flask เพื่อใช้ในการเปิด Port
+requests
