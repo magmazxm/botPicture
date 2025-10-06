@@ -1,234 +1,67 @@
 import os
-import requests
-import io
 import discord
 from discord.ext import commands
-from discord import app_commands
+import requests
 from dotenv import load_dotenv
-import threading
-from flask import Flask 
-import time 
-import asyncio # 💥 ต้อง Import asyncio สำหรับฟังก์ชัน on_ready ที่มีการหน่วงเวลา
 
-# โหลดตัวแปรสภาพแวดล้อม
 load_dotenv()
 
-# *********** 1. ตั้งค่า Environment Variables & Constants ***********
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-FREEPIK_API_KEY = os.getenv("FREEPIK_API_KEY")
+# โหลดตัวแปรสภาพแวดล้อม
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+FREEPIK_API_KEY = os.getenv("FREEPIK_API_KEY") # สมมติว่า FreePik มี API นี้
 
-# 🌟 PORT สำหรับ Render Web Service (Render มักจะใช้ PORT 10000)
-RENDER_PORT = int(os.getenv("PORT", 8080)) 
+# กำหนด ID ช่องที่อนุญาต
+ALLOWED_CHANNEL_ID = 1424193369646825482 # แทนที่ด้วย ID ช่องของคุณ
 
-# 🔒 Channel ID ที่บอทจะตอบสนองเท่านั้น 
-# ❗ ต้องเปลี่ยนเป็น Channel ID ที่ถูกต้อง
-ALLOWED_CHANNEL_ID = 1424193369646825482 
-
-# *********** 2. ตั้งค่า Discord Bot & Intents ***********
+# ตั้งค่า intents
 intents = discord.Intents.default()
-intents.message_content = True 
-bot = commands.Bot(command_prefix=commands.when_mentioned_or(""), intents=intents) 
+intents.message_content = True # ต้องเปิดใช้งานใน Discord Developer Portal ด้วย!
 
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# *********** 3. Web Server Function (สำหรับ Render Health Check) ***********
-app = Flask(__name__)
+# URL สมมติสำหรับ FreePik API
+# คุณจะต้องแทนที่ด้วย URL จริงของ FreePik Text-to-Image และ Image-to-Image API
+FREEPIK_TEXT_TO_IMAGE_API_URL = "https://api.freepik.com/v1/image/generate"
+FREEPIK_IMAGE_EDIT_API_URL = "https://api.freepik.com/v1/image/edit" # สมมติว่ามี
 
-# ตั้งชื่อ Flask App ให้ตรงกับชื่อไฟล์
-app.name = os.path.basename(__file__).replace(".py", "")
-
-@app.route('/')
-def home():
-    """Endpoint สำหรับให้ Render ตรวจสอบสถานะ (Health Check)"""
-    return "Discord Bot is running!", 200
-
-def run_web_server():
-    """ฟังก์ชันที่รัน Flask Web Server ใน Thread แยกเพื่อเปิด Port"""
-    print(f"🌐 Starting Web Server on port {RENDER_PORT} for Render Health Check...")
-    app.run(host='0.0.0.0', port=RENDER_PORT, debug=False, use_reloader=False)
-
-
-# *********** 4. ฟังก์ชันสำหรับเรียกใช้ Freepik Mystic API (Asynchronous Polling) ***********
-
-def check_mystic_status(job_id: str):
-    """ฟังก์ชัน Polling เพื่อตรวจสอบสถานะงานสร้างภาพ"""
-    url = f"https://api.freepik.com/v1/ai/mystic/{job_id}"
-    headers = {
-        "x-freepik-api-key": FREEPIK_API_KEY 
-    }
-
-    # จำกัดเวลา Polling (สูงสุด 60 วินาที)
-    max_wait_time = 60
-    start_time = time.time()
-    
-    while time.time() - start_time < max_wait_time:
-        time.sleep(3) # รอ 3 วินาทีก่อนเช็คสถานะอีกครั้ง
-        try:
-            response = requests.get(url, headers=headers)
-            data = response.json()
-            
-            # 🟢 บรรทัด Debug
-            print(f"DEBUG: Polling Status Check - HTTP {response.status_code}")
-
-            if response.status_code == 200:
-                status = data.get("data", {}).get("status")
-                
-                if status == "completed":
-                    print("DEBUG: Image completed successfully!")
-                    
-                    # 💥 การแก้ไขสำคัญ: ดึง URL จาก 'generated' array 
-                    image_url = None
-                    generated_images = data.get("data", {}).get("generated")
-                    if isinstance(generated_images, list) and len(generated_images) > 0:
-                        image_url = generated_images[0]
-                    # สำรอง
-                    elif data.get("data", {}).get("result", {}).get("image_url"):
-                         image_url = data.get("data", {}).get("result", {}).get("image_url")
-
-                    print("DEBUG: Final Image URL:", image_url)
-                    return image_url
-
-                elif status in ["failed", "cancelled"]:
-                    # 🚨 ถ้า Freepik ตอบ failed/cancelled
-                    print(f"DEBUG: Mystic job failed or cancelled. Final Status: {status}")
-                    return None 
-            else:
-                print(f"Mystic Status Check Error: Status {response.status_code}, Response: {response.text}")
-                return None
-        except Exception as e:
-            print(f"An error occurred during Mystic Status Check: {e}")
-            return None
-            
-    print("Mystic generation timed out after 60 seconds.")
-    return None
-
-def generate_mystic_image(prompt: str):
-    """ส่งคำสั่งสร้างภาพ Mystic และทำการ Polling จนกว่าจะเสร็จ"""
-    url = "https://api.freepik.com/v1/ai/mystic"
-    headers = {
-        "content-type": "application/json",
-        "x-freepik-api-key": FREEPIK_API_KEY 
-    }
-
-    payload = {
-        "prompt": prompt,
-        "resolution": "1k", 
-        "aspect_ratio": "square_1_1", 
-        "model": "realism" 
-    }
-    
-    try:
-        # 1. ส่งคำสั่งสร้าง
-        response = requests.post(url, headers=headers, json=payload)
-        
-        if response.status_code in [200, 202]: 
-            job_id = response.json().get("data", {}).get("task_id")
-            
-            print("DEBUG: Job Submit Response:", response.json())
-
-            if not job_id:
-                print("Mystic failed to return a task_id/job_id.")
-                print("Mystic Response Content:", response.text) 
-                return None
-            
-            # 2. ตรวจสอบสถานะงาน
-            image_url = check_mystic_status(job_id)
-            
-            if image_url:
-                # 3. ดาวน์โหลดรูปภาพ
-                image_response = requests.get(image_url)
-                if image_response.status_code == 200:
-                    return image_response.content
-                
-            return None
-            
-        else:
-            # 🚨 บรรทัด Debug สำหรับการส่งคำสั่งครั้งแรก
-            print(f"Mystic Submit Error: Status {response.status_code}")
-            print("Mystic Response Content:", response.text) 
-            return None
-            
-    except Exception as e:
-        print(f"An error occurred during Mystic API call: {e}")
-        return None
-
-
-# *********** 5. Discord Events - การแก้ไขสุดท้ายเพื่อบังคับ Sync ***********
 @bot.event
 async def on_ready():
-    print(f'🤖 บอทเชื่อมต่อแล้ว: {bot.user}')
-    print(f'🔒 บอทถูกจำกัดการใช้งานใน Channel ID: {ALLOWED_CHANNEL_ID}')
+    print(f'Logged in as {bot.user.name}')
+    print(f'Bot ID: {bot.user.id}')
+    print('Bot is ready!')
+
+@bot.before_invoke
+async def check_channel(ctx):
+    # ตรวจสอบว่าคำสั่งถูกเรียกใช้ในช่องที่อนุญาตหรือไม่
+    if ctx.channel.id != ALLOWED_CHANNEL_ID:
+        await ctx.send(f"บอทนี้สามารถใช้งานได้เฉพาะในช่อง <#{ALLOWED_CHANNEL_ID}> เท่านั้นค่ะ")
+        raise commands.CommandError("Command used in forbidden channel.")
+    return True
+
+@bot.command(name="genimage", help="สร้างรูปภาพจากข้อความ (เช่น !genimage amazing sunset over mountains)")
+async def generate_image(ctx, *, prompt: str):
+    await ctx.send(f"กำลังสร้างรูปภาพสำหรับ: '{prompt}' โปรดรอสักครู่...")
     
-    # 💥 (FINAL FIX) พยายาม Sync หลายครั้งเพื่อรับมือกับ Latency ของ Render
-    for attempt in range(3):
-        try:
-            # 💥 บังคับล้างและลงทะเบียนคำสั่งใหม่ทั้งหมด
-            bot.tree.clear_commands(guild=None)
-            synced = await bot.tree.sync()
-            
-            # หาก Sync สำเร็จ 
-            print(f"✅ FINAL SYNC (Attempt {attempt+1}): Synced {len(synced)} slash commands. การ Sync สำเร็จ.")
-            return # ออกจาก Loop เมื่อสำเร็จ
-            
-        except Exception as e:
-            print(f"❌ Failed to perform final slash command sync (Attempt {attempt+1}): {e}")
-            await asyncio.sleep(5) # รอ 5 วินาที ก่อนลองใหม่
+    headers = {
+        "Authorization": f"Bearer {FREEPIK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "prompt": prompt,
+        "width": 1024, # ปรับขนาดได้ตามต้องการ
+        "height": 1024,
+        "quality": "standard" # หรือ "hd" ถ้ามี
+    }
 
-    print("🚨 WARNING: Command Sync failed after 3 attempts. Please check Discord Developer Portal settings.")
+    try:
+        response = requests.post(FREEPIK_TEXT_TO_IMAGE_API_URL, headers=headers, json=payload)
+        response.raise_for_status() # ตรวจสอบข้อผิดพลาด HTTP
 
-
-# *********** 6. Slash Command ***********
-@bot.tree.command(name="generate", description="สร้างรูปภาพจากข้อความ Prompt โดยใช้ Freepik Mystic AI")
-@app_commands.describe(
-    prompt="คำอธิบายของรูปภาพที่คุณต้องการสร้าง (ภาษาอังกฤษ)"
-)
-async def generate_slash(interaction: discord.Interaction, prompt: str):
-    
-    # 🚫 ตรวจสอบ Channel ID
-    if interaction.channel_id != ALLOWED_CHANNEL_ID:
-        await interaction.response.send_message(
-            f"❌ คำสั่ง **/generate** ใช้ได้เฉพาะในช่องทางที่อนุญาตเท่านั้น!",
-            ephemeral=True
-        )
-        return
-    
-    # 🌟 ต้อง Defer ทันทีเพื่อหลีกเลี่ยง 404 Unknown Interaction (ซื้อเวลา 15 นาที)
-    await interaction.response.defer() 
-
-    print(f"DEBUG: Starting Mystic API call with prompt: {prompt}")
-
-    # เรียกใช้ฟังก์ชัน Mystic ใน Thread แยก
-    image_bytes = await bot.loop.run_in_executor(
-        None, generate_mystic_image, prompt
-    )
-    
-    # ตอบกลับไปยัง Discord
-    if image_bytes:
-        image_file = discord.File(io.BytesIO(image_bytes), filename="freepik_mystic_image.jpg")
+        data = response.json()
         
-        await interaction.followup.send(
-            f"✅ รูปภาพ Mystic ที่สร้างโดย Freepik จาก prompt: **{prompt}**",
-            file=image_file
-        )
-    else:
-        # 🚨 แจ้งผู้ใช้ว่าล้มเหลว
-        await interaction.followup.send(
-            f"❌ ไม่สามารถเจนรูปภาพได้ (อาจจะ Timeout หรือ Freepik ไม่สามารถสร้างได้) โปรดตรวจสอบ **Log ใน Render Web Service** เพื่อดูสาเหตุ.",
-            ephemeral=True
-        )
+        # สมมติว่า FreePik API ส่งคืน URL ของรูปภาพ
+        # คุณอาจจะต้องปรับเปลี่ยนตามโครงสร้างการตอบกลับจริงของ FreePik
+        image_url = data.get("image_url") or data.get("url") 
 
-# *********** 7. รันบอท ***********
-if __name__ == "__main__":
-    if not DISCORD_TOKEN or not FREEPIK_API_KEY:
-        print("🚨 ERROR: กรุณาตั้งค่า DISCORD_TOKEN และ FREEPIK_API_KEY ใน Environment Variables")
-    else:
-        # รัน Web Server ใน Thread แยกเพื่อจัดการ Health Check ของ Render
-        server_thread = threading.Thread(target=run_web_server)
-        server_thread.start()
-        
-        # รัน Discord Bot (Main Thread)
-        try:
-            bot.run(DISCORD_TOKEN)
-        except discord.errors.LoginFailure:
-            print("🚨 CRITICAL ERROR: การล็อกอินล้มเหลว! ตรวจสอบ DISCORD_TOKEN ของคุณ.")
-        except Exception as e:
-            print(f"🚨 CRITICAL ERROR: บอทล้มเหลวในการเริ่มต้น: {e}")
+        if image_url:
+            await ctx.send(f"นี่คือรูปภาพของคุณ: http://googleusercontent.com/image_generation_content/0
