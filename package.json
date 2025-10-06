@@ -1,6 +1,7 @@
 {
   "name": "discord-freepik-bot",
   "version": "1.0.0",
+  "description": "Discord bot using Freepik API",
   "main": "index.js",
   "type": "module",
   "scripts": {
